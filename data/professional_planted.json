@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "category_spike",
+    "target": "food_delivery",
+    "factor": 1.9
+  },
+  {
+    "kind": "price_hike",
+    "target": "NETFLIX",
+    "new_amount": 649
+  },
+  {
+    "kind": "large_transaction",
+    "target": "CROMA",
+    "amount": 42999,
+    "category": "shopping"
+  },
+  {
+    "kind": "overlapping_subscriptions",
+    "target": "video_streaming"
+  }
+]

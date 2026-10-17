@@ -1,0 +1,15 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime
+*.db
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.DS_Store
+
+# local tooling
+.claude/

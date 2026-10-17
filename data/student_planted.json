@@ -1,0 +1,15 @@
+[
+  {
+    "kind": "category_spike",
+    "target": "food_delivery",
+    "factor": 1.9
+  },
+  {
+    "kind": "duplicate_charge",
+    "target": "SWIGGY"
+  },
+  {
+    "kind": "overlapping_subscriptions",
+    "target": "music_streaming"
+  }
+]

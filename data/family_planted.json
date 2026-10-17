@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "category_spike",
+    "target": "shopping",
+    "factor": 2.2
+  },
+  {
+    "kind": "price_hike",
+    "target": "ACT FIBERNET",
+    "new_amount": 1199
+  },
+  {
+    "kind": "large_transaction",
+    "target": "RELIANCE DIGITAL",
+    "amount": 78000,
+    "category": "shopping"
+  },
+  {
+    "kind": "duplicate_charge",
+    "target": "BIGBASKET"
+  }
+]

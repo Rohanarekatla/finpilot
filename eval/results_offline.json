@@ -1,0 +1,134 @@
+{
+  "mode": "offline",
+  "categorization": {
+    "rules only": {
+      "transactions": 14570,
+      "accuracy": 0.8194,
+      "macro_f1": 0.8782,
+      "rule_coverage": 0.8194,
+      "long_tail_accuracy": 0.0
+    },
+    "rules + keyword heuristics": {
+      "transactions": 14570,
+      "accuracy": 0.9141,
+      "macro_f1": 0.9326,
+      "rule_coverage": 0.8194,
+      "long_tail_accuracy": 0.5247
+    }
+  },
+  "detection": {
+    "by_kind": {
+      "category_spike": {
+        "tp": 21,
+        "fp": 6,
+        "fn": 9,
+        "precision": 0.778,
+        "recall": 0.7
+      },
+      "duplicate_charge": {
+        "tp": 20,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "large_transaction": {
+        "tp": 20,
+        "fp": 5,
+        "fn": 0,
+        "precision": 0.8,
+        "recall": 1.0
+      },
+      "overlapping_subscriptions": {
+        "tp": 20,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "price_hike": {
+        "tp": 20,
+        "fp": 1,
+        "fn": 0,
+        "precision": 0.952,
+        "recall": 1.0
+      },
+      "overall": {
+        "tp": 101,
+        "fp": 12,
+        "fn": 9,
+        "precision": 0.894,
+        "recall": 0.918
+      }
+    },
+    "datasets": 30,
+    "examples_missed": [
+      "professional/1: category_spike:food_delivery",
+      "professional/2: category_spike:food_delivery",
+      "professional/4: category_spike:food_delivery",
+      "professional/5: category_spike:food_delivery",
+      "professional/9: category_spike:food_delivery",
+      "family/0: category_spike:shopping",
+      "family/4: category_spike:shopping",
+      "family/6: category_spike:shopping"
+    ],
+    "examples_false_alarm": [
+      "student/5: category_spike:transport",
+      "professional/2: category_spike:groceries",
+      "professional/3: large_transaction:YATRA",
+      "professional/8: large_transaction:REDBUS",
+      "professional/9: category_spike:transfers",
+      "family/0: category_spike:fuel",
+      "family/3: large_transaction:YATRA",
+      "family/3: large_transaction:REDBUS"
+    ]
+  },
+  "forecast": {
+    "folds": 90,
+    "next_month_spend_mape_pct": {
+      "finpilot": 15.94,
+      "naive_last_month": 19.03,
+      "mean_last_3_months": 16.19
+    },
+    "month_end_balance_mape_pct": {
+      "finpilot": 13.41,
+      "naive_repeat_last_net_flow": 15.92
+    },
+    "p10_p90_coverage_pct": 45.6,
+    "regular_months_only": {
+      "folds": 60,
+      "month_end_balance_mape_pct": 6.75,
+      "p10_p90_coverage_pct": 63.3
+    },
+    "note": "The final fold of each dataset contains the planted anomalies (spikes, one-off purchases), which no forecast should anticipate; 'regular months' excludes it."
+  },
+  "simulation": {
+    "runs": 15,
+    "pass_rate": {
+      "purchase_shifts_balance_exactly": "15/15",
+      "cancel_saves_exact_subscription_cost": "15/15",
+      "cutting_spend_never_hurts": "15/15",
+      "unaffordable_purchase_rejected": "15/15",
+      "tiny_purchase_not_rejected": "15/15"
+    },
+    "failures": []
+  },
+  "advice": {
+    "runs": 30,
+    "recommendations_delivered": 142,
+    "llm_written_pct": 0.0,
+    "critic_first_pass_rate_pct": 100.0,
+    "critic_rejections": 0,
+    "revision_loops": 0,
+    "delivered_grounded_pct": 100.0,
+    "delivered_with_evidence_pct": 100.0,
+    "delivered_quantified_pct": 88.0,
+    "top3_issue_coverage_pct": 100.0,
+    "avg_pipeline_seconds": 0.04
+  },
+  "llm_calls": {
+    "total": 0,
+    "failures": 0,
+    "by_agent": {}
+  }
+}
