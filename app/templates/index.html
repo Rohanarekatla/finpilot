@@ -41,6 +41,14 @@
   td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   details summary { cursor:pointer; color:var(--accent); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .pill.ahead { color:var(--ok); border-color:var(--ok); } .pill.on_track { color:var(--accent); border-color:var(--accent); }
+  .pill.behind { color:var(--alert); border-color:var(--alert); }
+  .list { list-style:none; padding:0; margin:10px 0; } .list li { padding:6px 0; border-bottom:1px solid var(--line); }
+  .x { background:transparent; color:var(--muted); border:none; padding:0 6px; cursor:pointer; }
+  .path { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:8px 0 4px; font-size:13px; }
+  .path span { border:1px solid var(--line); border-radius:6px; padding:1px 7px; }
+  .path i { color:var(--muted); font-style:normal; }
 </style>
 </head>
 <body>
@@ -55,6 +63,7 @@
   </form>
   <button id="run" onclick="analyze()">Analyze</button>
   <span id="status" class="muted"></span>
+  <span id="mode" class="pill" style="margin-left:auto" title="Where LLM calls go"></span>
 </header>
 <main>
   <section class="card" id="overview" hidden>
@@ -94,18 +103,35 @@
       <h2>Goals</h2>
       <form class="row" onsubmit="addGoal(event)">
         <input id="gname" placeholder="Emergency fund" required>
-        <input id="gamt" type="number" placeholder="Amount" required style="width:110px">
+        <input id="gamt" type="number" min="1" placeholder="Amount" required style="width:110px">
         <input id="gdate" type="date" required>
         <button>Add</button>
       </form>
-      <ul id="goals"></ul>
-      <button class="ghost" onclick="sendDigest()">Send digest now</button>
-      <p id="digest" class="muted"></p>
+      <ul class="list" id="goals"></ul>
+      <h2 style="margin-top:18px">Yearly &amp; occasional bills</h2>
+      <p class="muted">Bills your monthly pattern can't show (insurance, school fees, annual renewals). They go into the forecast.</p>
+      <form class="row" onsubmit="addBill(event)">
+        <input id="bname" placeholder="Car insurance" required>
+        <input id="bamt" type="number" min="1" placeholder="Amount" required style="width:110px">
+        <input id="bdate" type="date" required>
+        <select id="bevery"><option value="12">yearly</option><option value="6">every 6 months</option><option value="3">quarterly</option></select>
+        <button>Add</button>
+      </form>
+      <ul class="list" id="bills"></ul>
     </section>
   </div>
 
+  <section class="card" id="digest-card" hidden>
+    <h2>Proactive digest</h2>
+    <p class="muted" id="sched"></p>
+    <button class="ghost" onclick="sendDigest()">Send digest now</button>
+    <p id="digest"></p>
+  </section>
+
   <section class="card" id="audit-card" hidden>
-    <details><summary>Decision trail for this run</summary><table id="audit"></table></details>
+    <h2>How the agents ran</h2>
+    <div class="path" id="path"></div>
+    <details><summary>Full decision trail for this run</summary><table id="audit"></table></details>
   </section>
 </main>
 <script>
@@ -145,14 +171,15 @@ async function loadLatest() {
 }
 
 function render(r) {
-  for (const id of ["overview","recs-card","fc-card","ask-card","findings-card","goals-card","audit-card"]) $(id).hidden = false;
+  for (const id of ["overview","recs-card","ask-card","findings-card","goals-card","digest-card","audit-card"]) $(id).hidden = false;
   $("narrative").textContent = r.narrative;
   const s = r.stats, f = r.forecast;
-  $("tiles").innerHTML = [
+  const tiles = [
     ["Avg monthly income", inr(s.avg_monthly_income)], ["Avg monthly spend", inr(s.avg_monthly_spend)],
     ["Savings rate", s.savings_rate_pct + "%"], ["Fixed costs / month", inr(s.fixed_monthly_costs)],
-    ["Balance now", inr(f.start_balance)], [`Balance by ${f.to} (P50)`, inr(f.end_balance_p50)],
-  ].map(([k, v]) => `<div class="tile"><b>${v}</b><span>${k}</span></div>`).join("");
+  ];
+  if (f) tiles.push(["Balance now", inr(f.start_balance)], [`Balance by ${f.to} (P50)`, inr(f.end_balance_p50)]);
+  $("tiles").innerHTML = tiles.map(([k, v]) => `<div class="tile"><b>${v}</b><span>${k}</span></div>`).join("");
 
   $("recs").innerHTML = r.recommendations.map(x => `
     <div class="rec">
@@ -166,15 +193,20 @@ function render(r) {
 
   $("findings").innerHTML = r.findings.map(x => `<p><b class="sev-${x.severity}">●</b> <b>${esc(x.title)}</b><br><span class="muted">${esc(x.detail)}</span></p>`).join("");
 
-  const ser = r.series;
+  $("fc-card").hidden = !f;
   fcChart?.destroy();
+  if (f) drawForecast(r.series, f);  // charts are optional: the page works if the CDN is unreachable
+  loadGoals(); loadBills(); loadAudit(r.run_id);
+}
+
+function drawForecast(ser, f) {
+  $("fc-note").textContent = `Chance of going negative: ${f.prob_negative_pct}% · lowest expected balance ${inr(f.min_balance_p50)} on ${f.min_balance_p50_date}`;
+  if (!window.Chart) return;
   fcChart = new Chart($("fc"), { type: "line", data: { labels: ser.dates, datasets: [
     { label: "P90", data: ser.p90, borderWidth: 0, pointRadius: 0, fill: "+2", backgroundColor: getComputedStyle(document.body).getPropertyValue("--band") },
     { label: "P50", data: ser.p50, borderColor: getComputedStyle(document.body).getPropertyValue("--accent"), pointRadius: 0, borderWidth: 2 },
     { label: "P10", data: ser.p10, borderWidth: 0, pointRadius: 0 } ] },
     options: { plugins: { legend: { display: false } }, scales: { x: { ticks: { maxTicksLimit: 6 } }, y: { ticks: { callback: inr } } } } });
-  $("fc-note").textContent = `Chance of going negative: ${f.prob_negative_pct}% · lowest expected balance ${inr(f.min_balance_p50)} on ${f.min_balance_p50_date}`;
-  loadGoals(); loadAudit(r.run_id);
 }
 
 async function why(recId, el) {
@@ -188,11 +220,11 @@ async function ask(ev) {
   ev.preventDefault();
   $("answer").textContent = "Thinking…";
   try {
-    const r = await api(`/api/users/${user()}/ask`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: $("q").value }) });
+    const r = await postJson(`/api/users/${user()}/ask`, { question: $("q").value });
     const v = r.simulation ? `<span class="verdict ${r.simulation.verdict}">${r.simulation.verdict.replaceAll("_", " ")}</span> — ` : "";
     $("answer").innerHTML = v + esc(r.answer);
-    simChart?.destroy(); $("sim").hidden = !r.simulation;
-    if (r.simulation) {
+    simChart?.destroy(); $("sim").hidden = !(r.simulation && window.Chart);
+    if (r.simulation && window.Chart) {
       const b = r.simulation.series.baseline, w = r.simulation.series.with_decision;
       simChart = new Chart($("sim"), { type: "line", data: { labels: b.dates, datasets: [
         { label: "Today's path", data: b.p50, pointRadius: 0, borderWidth: 2 },
@@ -202,15 +234,41 @@ async function ask(ev) {
   } catch (e) { $("answer").textContent = e.message; }
 }
 
+const STATUS = { ahead: "ahead of plan", on_track: "on track", behind: "behind" };
 async function loadGoals() {
   const g = await api(`/api/users/${user()}/goals`);
-  $("goals").innerHTML = g.map(x => `<li>${esc(x.name)}: ${inr(x.target_amount)} by ${x.target_date}</li>`).join("") || "<li class='muted'>No goals yet</li>";
+  $("goals").innerHTML = g.map(x => {
+    const trend = x.history.map(h => h.probability_pct + "%").join(" → ");
+    const pill = x.status ? `<span class="pill ${x.status}">${STATUS[x.status]}</span>` : "";
+    return `<li>${pill} <b>${esc(x.name)}</b>: ${inr(x.target_amount)} by ${x.target_date}
+      <button class="x" title="Remove" onclick="removeItem('goals', ${x.id})">✕</button>
+      ${trend ? `<br><span class="muted">Chance of reaching it, run by run: ${trend}</span>` : ""}</li>`;
+  }).join("") || "<li class='muted'>No goals yet. Add one and the advice adapts as you get ahead or fall behind.</li>";
 }
 async function addGoal(ev) {
   ev.preventDefault();
-  await api(`/api/users/${user()}/goals`, { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: $("gname").value, target_amount: +$("gamt").value, target_date: $("gdate").value }) });
+  await postJson(`/api/users/${user()}/goals`, { name: $("gname").value, target_amount: +$("gamt").value, target_date: $("gdate").value });
   await analyze();
+}
+async function loadBills() {
+  const b = await api(`/api/users/${user()}/bills`);
+  const every = { 12: "yearly", 6: "every 6 months", 3: "quarterly" };
+  $("bills").innerHTML = b.map(x => `<li><b>${esc(x.name)}</b>: ${inr(x.amount)} next on ${x.next_date}
+    (${every[x.every_months] || "every " + x.every_months + " months"})
+    <button class="x" title="Remove" onclick="removeItem('bills', ${x.id})">✕</button></li>`).join("")
+    || "<li class='muted'>No bills declared</li>";
+}
+async function addBill(ev) {
+  ev.preventDefault();
+  await postJson(`/api/users/${user()}/bills`, { name: $("bname").value, amount: +$("bamt").value, next_date: $("bdate").value, every_months: +$("bevery").value });
+  await analyze();
+}
+async function removeItem(kind, id) {
+  await api(`/api/users/${user()}/${kind}/${id}`, { method: "DELETE" });
+  await analyze();
+}
+function postJson(path, body) {
+  return api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 async function sendDigest() {
   $("digest").textContent = "Sending…";
@@ -219,9 +277,20 @@ async function sendDigest() {
 }
 async function loadAudit(runId) {
   const r = await api(`/api/runs/${runId}/audit`);
+  const routes = r.decisions.filter(d => d.agent === "coordinator" && ["route", "finalize"].includes(d.step));
+  $("path").innerHTML = routes.map(d => `<span title="${esc(d.reason)}">${esc(d.step === "finalize" ? "finalize" : d.decision)}</span>`).join("<i>→</i>");
   $("audit").innerHTML = "<tr><th>Agent</th><th>Step</th><th>Decision</th><th>Reason</th></tr>" +
-    r.decisions.map(d => `<tr><td>${d.agent}</td><td>${d.step}</td><td>${esc(d.decision)}</td><td>${esc(d.reason)}</td></tr>`).join("");
+    r.decisions.map(d => `<tr><td>${esc(d.agent)}</td><td>${esc(d.step)}</td><td>${esc(d.decision)}</td><td>${esc(d.reason)}</td></tr>`).join("");
 }
+async function loadHealth() {
+  try {
+    const h = await api("/api/health");
+    $("mode").textContent = h.llm === "mesh" ? `LLM: Mesh (${h.model_fast})` : "LLM: offline fallback";
+    $("sched").textContent = h.scheduler ? `Sent automatically by the background scheduler (cron "${h.digest_cron}").`
+      : "The background scheduler is off here (set FINPILOT_SCHEDULER=1 to send it weekly).";
+  } catch (_) {}
+}
+loadHealth();
 loadLatest();
 </script>
 </body>

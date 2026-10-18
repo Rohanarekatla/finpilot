@@ -17,11 +17,14 @@ All LLM calls go through **[Mesh API](https://api.meshapi.ai)**, which is OpenAI
    brands the rules don't list, person-to-person UPI). Keyword heuristics are the offline fallback.
 3. **Analyze:** detects recurring payments, subscriptions, overlapping services, price hikes,
    category spikes, one-off outliers, duplicate charges and the savings rate.
-4. **Forecast:** a 90-day (or until goal date) Monte Carlo of the balance with P10/P50/P90 bands, plus goal tracking.
+4. **Forecast:** a 90-day (or until goal date) Monte Carlo of the balance with calibrated P10/P50/P90 bands. It
+   includes yearly bills the user declares (insurance, school fees) that a monthly pattern can't show.
 5. **Simulate:** answers "Can I afford a ₹60k trip next month?", "What if I cancel Hotstar?" and "Cut food
    delivery by 30%" against the same random futures as the baseline.
 6. **Advise:** specific actions with rupee impact ("Keep NETFLIX, cancel AMAZON PRIME VIDEO and DISNEY HOTSTAR,
    saving ₹598/month"). Each one cites the finding that triggered it.
+   - Goal advice adapts to progress: behind → the exact extra ₹/month needed; ahead → reach it early, redirect the surplus.
+   - A falling chance since the last run becomes an alert.
 7. **Critique and revise:** a critic verifies every recommendation. Failures loop back to the advisor with feedback.
 8. **Deliver proactively:** an APScheduler job runs the pipeline weekly and sends a one-insight, one-action
    digest (Telegram if configured, always stored).
@@ -30,18 +33,30 @@ All LLM calls go through **[Mesh API](https://api.meshapi.ai)**, which is OpenAI
 
 ## Agents and how they cooperate
 
-```
-                    ┌──────────────────── Coordinator (LangGraph) ────────────────────┐
- CSV ─▶ ingest ─▶  categorize ─▶ analyze ─▶ forecast ─▶ advise ─▶ critique ──pass──▶ finalize ─▶ DB / UI / digest
-                      │             │           │          ▲          │
-                      │             │           │          └─ issues ─┘  (≤ 2 revisions, then drop + backfill)
-                      ▼             ▼           ▼
-                 Mesh LLM      stats + LLM   Monte Carlo
-                 (long tail)   narrative     + goals
+The coordinator is a LangGraph state graph. It doesn't just chain the agents: at three points it decides
+where the run goes next, and it logs each decision with its reason.
 
+```mermaid
+flowchart LR
+    categorize --> analyze
+    analyze -- "≥ 28 days of history" --> forecast
+    analyze -- "too little history" --> skip_forecast
+    forecast --> plan
+    skip_forecast --> plan
+    plan -- "actionable findings" --> advise
+    plan -- "nothing to act on" --> finalize
+    advise --> critique
+    critique -- "rejections, ≤ 2 revisions" --> advise
+    critique -- "all pass / out of attempts" --> finalize
+```
+
+```
  Ask:  question ─▶ classify ──afford / what_if──▶ simulate ─▶ respond (grounded rewrite)
                            └──question──────────▶ answer (grounded QA over user's data)
 ```
+
+`GET /api/graph` (or `python -m app.graph`) prints both graphs as Mermaid generated from the compiled graphs.
+The dashboard's "How the agents ran" panel shows the path each run actually took.
 
 | Agent | Job | Tools / prompt | File |
 |---|---|---|---|
@@ -76,6 +91,14 @@ All LLM calls go through **[Mesh API](https://api.meshapi.ai)**, which is OpenAI
   deterministic path, so tests and CI are reproducible. With a key, the same graph uses Mesh.
 - **Pure graph, separate persistence.** `graph.py` takes a DataFrame and returns results. `service.py`
   persists them. The eval harness runs exactly the production graph.
+- **Calibrated uncertainty, tuned only on dev data.** A raw 13-week bootstrap under-states tail weeks, so each
+  simulated week is widened around the average week. The factor (1.3) is the smallest that reaches 80% coverage
+  on dev seeds ([`eval/TUNING_forecast.md`](eval/TUNING_forecast.md)); test-seed results are reported unchanged.
+- **Affordability is judged against your baseline.** If your balance is already at risk, a ₹500 purchase is
+  "tight, and here is why", not "unaffordable". The verdict separates existing risk from the risk the decision adds.
+- **Fail soft, fast.** Each Mesh call has a 30 s timeout and 1 retry, then falls back. Short statements skip the
+  forecast instead of crashing. Unknown merchants go to Mesh in parallel batches and are remembered in SQLite,
+  so they are never asked about twice.
 
 ## Self-evaluation
 
@@ -93,36 +116,54 @@ Offline results ([`eval/RESULTS_offline.md`](eval/RESULTS_offline.md), 30 datase
 | Pattern detection, all kinds | precision **0.89**, recall **0.92** (spikes are hardest: P 0.78, R 0.70) |
 | Next-month spend MAPE | **15.9%** vs 19.0% (last month), 16.2% (3-month mean) |
 | Month-end balance MAPE (regular months) | **6.8%** |
-| What-if properties (exact purchase delta, exact subscription saving, cuts never hurt, …) | 75/75 |
+| P10–P90 band coverage (regular months) | **73.3%** (63.3% before calibration; nominal 80%) |
+| What-if properties (exact purchase delta, exact subscription saving, exact bill, cuts never hurt, …) | 90/90 |
 | Delivered advice: grounded / cites evidence / top-3 issues covered | 100% / 100% / 100% |
+| Goal advice matches status / following "save ₹X more a month" reaches the goal | 100% / 100% (76 behind goals) |
 
 With `MESH_API_KEY` set, `python -m eval.run_eval` also measures the LLM categorization tier, LLM-written
 advice and the critic's first-pass rate and revision loops. It writes `eval/RESULTS.md`.
 
 **Known gaps (honest):**
-- The P10–P90 band covers only ~63% of real outcomes in regular months (the ideal is 80%). The 13-week
-  bootstrap underestimates tail risk.
+- After calibration the P10–P90 band covers 73% of regular months on test seeds, against 81% on the dev seeds
+  it was tuned on. It is still somewhat narrow out of sample.
 - Spike recall is limited for low-frequency categories: family shopping is ~5 purchases a month.
-- Annual bills seen once are not forecast.
+- Yearly bills are forecast only once the user declares them. A bill seen once in the history isn't detected
+  automatically.
 - The heuristic tier misfiles long-tail travel sites as transfers, which causes most of the large-transaction
   false alarms. The LLM tier is meant to fix that.
+
+Design history: [PLAN.md](PLAN.md) (the original build) and [PLAN-2.md](PLAN-2.md) (the second pass:
+routing, calibration, bills, adaptive goals).
 
 ## Run it
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+# with uv
+uv sync                          # creates .venv and installs everything (incl. pytest)
+cp .env.example .env             # add your Mesh key (rsk_...)
+uv run python -m app.llm --ping  # checks the key, model ids and one tiny chat call
+uv run main.py                   # http://localhost:8000
+
+# or with pip
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env            # add your Mesh key (rsk_...)
-uvicorn app.main:app --reload   # http://localhost:8000
+uvicorn app.main:app --reload
+
+# or with Docker (scheduler on, data in a volume)
+docker build -t finpilot . && docker run -p 8000:8000 --env-file .env -v finpilot:/data finpilot
 ```
+
+To deploy on Render, use New → Blueprint → this repo (`render.yaml`) and paste `MESH_API_KEY` when asked.
 
 In the dashboard pick a persona, then **Load sample**. You can also upload your own CSV (columns: `date`,
 `description`/`narration`, and `amount` or `debit`/`credit`, plus optional `balance`). Then ask things like
 *"Can I afford a ₹60,000 trip next month?"* or add a goal and see the advice adapt.
 
 ```bash
-pytest                                 # 11 offline tests (API, pipeline, critic, simulation)
+pytest                                 # 25 offline tests (API, routing, LLM revise/drop paths, critic, simulation)
 python -m eval.run_eval --offline      # deterministic eval → eval/RESULTS_offline.md
+python -m eval.tune_forecast           # forecast spread tuning on dev seeds → eval/TUNING_forecast.md
 python -m eval.run_eval                # with Mesh → eval/RESULTS.md
 python -m app.synthetic --out data     # regenerate sample statements + planted labels
 ```
@@ -136,10 +177,14 @@ python -m app.synthetic --out data     # regenerate sample statements + planted 
 | POST | `/api/users/{id}/analyze` | Run the full agent pipeline |
 | POST | `/api/users/{id}/ask` | `{"question": "..."}` → routed answer or simulation |
 | POST | `/api/users/{id}/simulate` | Explicit scenario (`purchases`, `monthly_changes`, `category_cuts`, `cancel`) |
-| POST/GET | `/api/users/{id}/goals` | Savings goals (tracked in the forecast) |
+| POST/GET | `/api/users/{id}/goals` | Savings goals: status (behind / on track / ahead) and per-run history |
+| POST/GET | `/api/users/{id}/bills` | Yearly or periodic bills the forecast should include |
+| DELETE | `/api/users/{id}/goals/{goal_id}`, `/api/users/{id}/bills/{bill_id}` | Remove a goal or bill |
 | GET | `/api/recommendations/{rec_id}/why` | Evidence + decision trail for one recommendation |
 | GET | `/api/runs/{run_id}/audit` | Full decision trail of a run |
 | POST | `/api/users/{id}/digest` | Send the proactive digest now (also scheduled weekly) |
+| GET | `/api/health?deep=true` | LLM mode, scheduler status, and a Mesh key/model check |
+| GET | `/api/graph` | Both LangGraph graphs as Mermaid |
 
 ## Repository layout
 
@@ -153,6 +198,8 @@ app/
   digest.py      APScheduler weekly digest          main.py  FastAPI + dashboard
   synthetic.py   labelled statement generator       ingest.py  CSV normalisation
 eval/run_eval.py self-evaluation → eval/RESULTS*.md, results*.json
-tests/           offline pytest suite
+eval/tune_forecast.py  spread calibration on dev seeds → eval/TUNING_forecast.md
+tests/           offline pytest suite (fake LLM for the revision paths)
+main.py          `python main.py` launcher      Dockerfile, render.yaml  deployment
 data/            sample statements + planted-pattern labels
 ```

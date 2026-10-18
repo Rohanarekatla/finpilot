@@ -17,6 +17,10 @@ MODEL_SMART = os.getenv("FINPILOT_MODEL_SMART", "openai/gpt-4o")
 
 # FINPILOT_OFFLINE=1 forces the deterministic fallbacks (used by tests and CI).
 OFFLINE = os.getenv("FINPILOT_OFFLINE", "0") == "1"
+# A slow model must never hang a request: time out and fall back to the deterministic path.
+LLM_TIMEOUT_S = float(os.getenv("FINPILOT_LLM_TIMEOUT", "30"))
+LLM_MAX_RETRIES = int(os.getenv("FINPILOT_LLM_RETRIES", "1"))
+LLM_MAX_WORKERS = int(os.getenv("FINPILOT_LLM_WORKERS", "4"))  # parallel categorizer batches
 
 DB_PATH = Path(os.getenv("FINPILOT_DB", str(ROOT / "finpilot.db")))
 CURRENCY = "₹"
@@ -26,7 +30,8 @@ FORECAST_SIMULATIONS = int(os.getenv("FINPILOT_SIMULATIONS", "500"))
 MAX_ADVISOR_REVISIONS = int(os.getenv("FINPILOT_MAX_REVISIONS", "2"))
 
 # Proactive digest delivery (all optional; without them digests are stored + logged).
-SCHEDULER_ENABLED = os.getenv("FINPILOT_SCHEDULER", "1") == "1"
+# Opt-in, so `uvicorn --reload` and tests never start a second scheduler; deployments set it to 1.
+SCHEDULER_ENABLED = os.getenv("FINPILOT_SCHEDULER", "0") == "1"
 DIGEST_CRON = os.getenv("FINPILOT_DIGEST_CRON", "0 8 * * mon")  # Mondays 08:00
 TIMEZONE = os.getenv("FINPILOT_TZ", "Asia/Kolkata")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")

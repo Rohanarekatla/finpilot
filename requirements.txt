@@ -1,3 +1,4 @@
+# Runtime dependencies (mirrored in pyproject.toml for uv users).
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
@@ -8,4 +9,5 @@ pandas>=2.1
 numpy>=1.26
 python-dotenv>=1.0
 apscheduler>=3.10,<4
+# Tests
 pytest>=8.0

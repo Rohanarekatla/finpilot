@@ -29,10 +29,11 @@ def compose(result: dict) -> str:
     insight = findings[0]["detail"] if findings else result["narrative"]
     action = f"This week: {recs[0]['action']}" if recs else "No action needed this week."
     base = f"FinPilot weekly: {insight} {action}"
+    forecast = {k: v for k, v in (result.get("forecast") or {}).items() if k != "month_ends"}
     resp = get_llm().chat_json(AGENT, SYSTEM, {"insight": insight, "action": recs[0] if recs else None,
-                                               "forecast": {k: v for k, v in result["forecast"].items() if k != "month_ends"}})
+                                               "forecast": forecast})
     text = (resp or {}).get("digest", "")
-    if text and not ungrounded(text, allowed_numbers([base, result["forecast"], recs[:1]])):
+    if text and not ungrounded(text, allowed_numbers([base, forecast, recs[:1]])):
         return text
     return base
 

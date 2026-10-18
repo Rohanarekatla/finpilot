@@ -1,4 +1,8 @@
-"""SQLite persistence: transactions, goals, runs, findings, recommendations, audit trail."""
+"""SQLite persistence: transactions, goals, bills, runs, findings, recommendations, audit trail.
+
+New tables are created with CREATE TABLE IF NOT EXISTS, so an existing
+database picks them up on the next start without a migration step.
+"""
 from __future__ import annotations
 
 import json
@@ -83,6 +87,33 @@ CREATE TABLE IF NOT EXISTS decisions (
     data TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_decisions_run ON decisions (run_id);
+CREATE TABLE IF NOT EXISTS bills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    amount REAL NOT NULL,
+    next_date TEXT NOT NULL,
+    every_months INTEGER NOT NULL DEFAULT 12,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goal_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    user_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    probability_pct REAL NOT NULL,
+    projected_p50 REAL NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_goal_snapshots_goal ON goal_snapshots (goal_id, id);
+CREATE TABLE IF NOT EXISTS merchant_memory (
+    key TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    reason TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS digests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL,
@@ -182,6 +213,76 @@ def add_goal(user_id: str, name: str, target_amount: float, target_date: str) ->
 def list_goals(user_id: str) -> list[dict]:
     with connect() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM goals WHERE user_id = ? ORDER BY id", (user_id,))]
+
+
+def delete_goal(user_id: str, goal_id: int) -> bool:
+    with connect() as conn:
+        conn.execute("DELETE FROM goal_snapshots WHERE user_id = ? AND goal_id = ?", (user_id, goal_id))
+        return conn.execute("DELETE FROM goals WHERE user_id = ? AND id = ?", (user_id, goal_id)).rowcount > 0
+
+
+def latest_goal_snapshots(user_id: str) -> dict[int, dict]:
+    """The most recent stored status of each goal, keyed by goal id."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT s.* FROM goal_snapshots s JOIN (SELECT goal_id, MAX(id) AS id FROM goal_snapshots "
+            "WHERE user_id = ? GROUP BY goal_id) last ON s.id = last.id", (user_id,)).fetchall()
+    return {int(r["goal_id"]): dict(r) for r in rows}
+
+
+def save_goal_snapshots(run_id: str, user_id: str, goals: list[dict], statuses: list[dict]) -> None:
+    """`statuses` is the forecaster's goal output, in the same order as `goals`."""
+    with connect() as conn:
+        conn.executemany(
+            "INSERT INTO goal_snapshots (goal_id, user_id, run_id, created_at, probability_pct, projected_p50, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(g["id"], user_id, run_id, now_iso(), s["probability_pct"], s["projected_p50"], s["status"])
+             for g, s in zip(goals, statuses)],
+        )
+
+
+def goal_history(user_id: str, goal_id: int, limit: int = 20) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT created_at, probability_pct, projected_p50, status FROM goal_snapshots "
+            "WHERE user_id = ? AND goal_id = ? ORDER BY id DESC LIMIT ?", (user_id, goal_id, limit)).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def add_bill(user_id: str, name: str, amount: float, next_date: str, every_months: int = 12) -> int:
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO bills (user_id, name, amount, next_date, every_months, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, name, abs(amount), next_date, every_months, now_iso()),
+        )
+        return int(cur.lastrowid)
+
+
+def list_bills(user_id: str) -> list[dict]:
+    with connect() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM bills WHERE user_id = ? ORDER BY next_date", (user_id,))]
+
+
+def delete_bill(user_id: str, bill_id: int) -> bool:
+    with connect() as conn:
+        return conn.execute("DELETE FROM bills WHERE user_id = ? AND id = ?", (user_id, bill_id)).rowcount > 0
+
+
+def load_merchant_memory() -> dict[str, tuple[str, float, str]]:
+    with connect() as conn:
+        rows = conn.execute("SELECT key, category, confidence, reason FROM merchant_memory").fetchall()
+    return {r["key"]: (r["category"], float(r["confidence"]), r["reason"]) for r in rows}
+
+
+def save_merchant_memory(entries: dict[str, tuple[str, float, str]]) -> None:
+    if not entries:
+        return
+    with connect() as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO merchant_memory (key, category, confidence, reason, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(k, cat, conf, reason, now_iso()) for k, (cat, conf, reason) in entries.items()],
+        )
 
 
 def save_run(run_id: str, user_id: str, kind: str, summary: dict) -> None:

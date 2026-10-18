@@ -1,0 +1,14 @@
+# Render blueprint: Dashboard > New > Blueprint > pick this repo, then paste MESH_API_KEY when prompted.
+services:
+  - type: web
+    name: finpilot
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: MESH_API_KEY
+        sync: false
+      - key: FINPILOT_SCHEDULER
+        value: "1"
+      - key: FINPILOT_TZ
+        value: Asia/Kolkata

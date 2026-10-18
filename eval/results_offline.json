@@ -91,14 +91,14 @@
       "mean_last_3_months": 16.19
     },
     "month_end_balance_mape_pct": {
-      "finpilot": 13.41,
+      "finpilot": 13.45,
       "naive_repeat_last_net_flow": 15.92
     },
-    "p10_p90_coverage_pct": 45.6,
+    "p10_p90_coverage_pct": 53.3,
     "regular_months_only": {
       "folds": 60,
-      "month_end_balance_mape_pct": 6.75,
-      "p10_p90_coverage_pct": 63.3
+      "month_end_balance_mape_pct": 6.78,
+      "p10_p90_coverage_pct": 73.3
     },
     "note": "The final fold of each dataset contains the planted anomalies (spikes, one-off purchases), which no forecast should anticipate; 'regular months' excludes it."
   },
@@ -108,6 +108,7 @@
       "purchase_shifts_balance_exactly": "15/15",
       "cancel_saves_exact_subscription_cost": "15/15",
       "cutting_spend_never_hurts": "15/15",
+      "declared_bill_shifts_balance_exactly": "15/15",
       "unaffordable_purchase_rejected": "15/15",
       "tiny_purchase_not_rejected": "15/15"
     },
@@ -115,16 +116,40 @@
   },
   "advice": {
     "runs": 30,
-    "recommendations_delivered": 142,
+    "recommendations_delivered": 143,
     "llm_written_pct": 0.0,
     "critic_first_pass_rate_pct": 100.0,
     "critic_rejections": 0,
     "revision_loops": 0,
     "delivered_grounded_pct": 100.0,
     "delivered_with_evidence_pct": 100.0,
-    "delivered_quantified_pct": 88.0,
+    "delivered_quantified_pct": 86.7,
     "top3_issue_coverage_pct": 100.0,
-    "avg_pipeline_seconds": 0.04
+    "avg_pipeline_seconds": 0.12
+  },
+  "goals": {
+    "runs": 30,
+    "status_by_goal_size": {
+      "0.5x projected": {
+        "on_track": 8,
+        "behind": 3,
+        "ahead": 19
+      },
+      "0.9x projected": {
+        "behind": 13,
+        "on_track": 17
+      },
+      "1.5x projected": {
+        "behind": 30
+      },
+      "3x projected": {
+        "behind": 30
+      }
+    },
+    "probability_falls_as_goal_grows_pct": 100.0,
+    "advice_matches_status_pct": 100.0,
+    "behind_goals": 76,
+    "following_advice_reaches_goal_pct": 100.0
   },
   "llm_calls": {
     "total": 0,

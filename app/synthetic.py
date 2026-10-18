@@ -257,7 +257,7 @@ def main() -> None:
         s = generate(persona, seed=args.seed)
         s.transactions.assign(date=s.transactions["date"].dt.strftime("%Y-%m-%d")).to_csv(
             out / f"{persona}.csv", index=False)
-        (out / f"{persona}_planted.json").write_text(json.dumps(s.planted, indent=2))
+        (out / f"{persona}_planted.json").write_text(json.dumps(s.planted, indent=2), encoding="utf-8")
         print(f"{persona}: {len(s.transactions)} transactions -> {out / f'{persona}.csv'}")
 
 

@@ -102,6 +102,20 @@ def build_candidates(analysis: Analysis, extra: list[Finding]) -> list[dict]:
                      why=f"At the current pace you reach about {inr(d['projected_p50'])} by then "
                          f"({d['probability_pct']}% chance of hitting the goal).",
                      monthly_impact=d["required_extra_monthly"])
+        elif f.kind == "goal_ahead":
+            when = (f"around {d['on_track_date']}, before {d['target_date']}" if d.get("on_track_date")
+                    else f"by {d['target_date']}")
+            c = dict(title=f"'{d['name']}' is ahead of plan",
+                     action=f"Keep your current pace — you are projected to reach '{d['name']}' {when} with about "
+                            f"{inr(d['surplus'])} to spare. Raise the target or start your next goal with the extra.",
+                     why=f"You have a {d['probability_pct']}% chance of reaching {inr(d['target_amount'])} by "
+                         f"{d['target_date']}.")
+        elif f.kind == "upcoming_bill":
+            c = dict(title=f"Set aside money for {d['name']}",
+                     action=f"Move {inr(d['set_aside_monthly'])} a month into savings for {d['name']} so the "
+                            f"{inr(d['amount'])} due on {d['due_date']} does not hit your balance all at once.",
+                     why=f"It comes every {d['every_months']} months, so your monthly pattern does not show it"
+                         + ("; it is already in your forecast." if d["in_forecast"] else "."))
         if c:
             c.setdefault("monthly_impact", 0.0)
             c.setdefault("one_off_impact", 0.0)

@@ -1,0 +1,5 @@
+# Store text with LF in the repository and check it out with LF everywhere, so Windows
+# and Linux clones never show line-ending-only changes.
+* text=auto eol=lf
+*.png binary
+*.db binary

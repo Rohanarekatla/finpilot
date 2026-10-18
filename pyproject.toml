@@ -1,0 +1,25 @@
+[project]
+name = "finpilot"
+version = "0.2.0"
+description = "Proactive multi-agent financial agent: categorise, analyse, forecast, simulate and advise (Agent Arena 2026, Track 02)"
+readme = "README.md"
+requires-python = ">=3.11"
+# Keep in sync with requirements.txt (pip users and the Agent Arena checks read that file).
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
+    "jinja2>=3.1",
+    "openai>=1.40",
+    "langgraph>=0.2",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "python-dotenv>=1.0",
+    "apscheduler>=3.10,<4",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+package = false  # an application, not a library: `uv sync` installs dependencies only

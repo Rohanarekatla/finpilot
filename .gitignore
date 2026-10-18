@@ -5,6 +5,7 @@
 
 # runtime
 *.db
+*.db-journal
 __pycache__/
 *.pyc
 .venv/
@@ -13,3 +14,6 @@ __pycache__/
 
 # local tooling
 .claude/
+.vscode/
+.idea/
+_to_delete/

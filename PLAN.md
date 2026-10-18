@@ -19,6 +19,10 @@ Done and working offline (11 tests passing, eval in `eval/RESULTS_offline.md`):
 
 Not yet verified: **anything with a live Mesh key** (LLM categorization, LLM-written advice, critic first-pass rate).
 
+> **Update 18 Oct:** the second pass is recorded in [PLAN-2.md](PLAN-2.md). It covers coordinator routing, Mesh
+> timeouts, parallel and persistent categorization, forecast calibration, yearly bills, goal-adaptive advice and
+> 25 tests. PLAN-2.md also holds the up-to-date list of what is left.
+
 ## Day 0 — 17 Oct (today)
 
 - [ ] Register on the hackathon dashboard before 11 pm IST and copy the `SUBMISSION_TOKEN`
@@ -31,14 +35,14 @@ Not yet verified: **anything with a live Mesh key** (LLM categorization, LLM-wri
 - [ ] Confirm which Mesh model ids work (`openai/gpt-4o-mini`, `openai/gpt-4o`) and that `response_format` is honoured; adjust defaults in `.env.example`
 - [ ] Read the LLM run's audit trail: are critic rejections real problems or false rejections? Tune prompts, not the checks
 - [ ] Report LLM vs. heuristic long-tail categorization accuracy, and how many large-transaction false alarms the LLM tier removes
-- [ ] Add a test with a fake LLM client that returns a bad recommendation, to prove the revise → drop → backfill path
+- [x] Add a test with a fake LLM client that returns a bad recommendation, to prove the revise → drop → backfill path (`tests/test_orchestration.py`)
 
 ## Day 2 — 19 Oct: close the known gaps
 
-- [ ] **Forecast calibration:** the P10–P90 band covers ~63% of regular months (target 80%). Try a longer, recency-weighted bootstrap or variance inflation; tune on dev seeds 100–114, report on test seeds 0–9
+- [x] **Forecast calibration:** variance inflation ×1.3, tuned on dev seeds 100–114 (81%), reported on test seeds 0–9: 63% → 73%
 - [ ] **Spike recall** in low-frequency categories (family shopping): compare against a count-based test
-- [ ] **Annual bills:** let the user mark a known yearly payment so the forecast includes it
-- [ ] **Goal-adaptive advice:** show the advice changing as the user moves ahead of or behind a goal (judging bonus)
+- [x] **Annual bills:** `bills` table + API + dashboard form. They are forecast and produce a "set aside ₹X/month" action
+- [x] **Goal-adaptive advice:** behind / on track / ahead, a trend since the last run, and eval §6
 
 ## Day 3 — 20 Oct: present and submit (stop coding by 6 pm IST)
 
@@ -165,10 +169,10 @@ Layering rules:
 ### 4.1 Pipeline graph
 
 ```
-START → categorize → analyze → forecast → advise → critique ─┬─▶ finalize → END
-                                             ▲               │
-                                             └── revise ─────┘  if any rec failed AND recs came from the
-                                                                LLM AND attempts ≤ MAX_ADVISOR_REVISIONS (2)
+START → categorize → analyze ─┬─ ≥ 28 days ─▶ forecast ──────┐
+                              └─ less ──────▶ skip_forecast ─┴▶ plan ─┬─ candidates ─▶ advise → critique ─┬─▶ finalize → END
+                                                                      └─ none ────────────────────────────┘
+        critique → advise (revise) if any rec failed AND recs came from the LLM AND attempts ≤ MAX_ADVISOR_REVISIONS (2)
 ```
 
 State (`PipelineState`): `txns`, `start_balance`, `goals`, `mode`, `audit`, `llm`, `analysis`,
@@ -179,7 +183,9 @@ State (`PipelineState`): `txns`, `start_balance`, `goals`, `mode`, `audit`, `llm
 |---|---|
 | `categorize` | Categorizes only rows whose category is still null, so stored categories are reused |
 | `analyze` | Runs the analyzer: recurring payments, findings, stats, narrative |
-| `forecast` | Builds the baseline forecast, adds forecast findings (trajectory, cash shortfall, goal at risk), builds the advisor's candidate actions |
+| `forecast` | Builds the baseline forecast (incl. declared bills) and its findings: trajectory, cash shortfall, goal at risk / ahead / trend, upcoming bill |
+| `skip_forecast` | Used when there are fewer than 28 days of history: no forecast, an `insufficient_history` finding |
+| `plan` | Coordinator: builds the advisor's quantified candidate actions; routes to `advise`, or to `finalize` when there are none |
 | `advise` | Drafts recommendations. On a revision pass it also sends the previous list and the critic's failures |
 | `critique` | Runs the deterministic checks and records the first-pass rate |
 | `finalize` | Keeps passed recs; logs dropped ones; if fewer than 3 survive, backfills the top uncovered candidates as templates (re-checked by the critic); assigns `rec_id`s |
@@ -408,6 +414,12 @@ Outputs: `eval/RESULTS_offline.md` and `results_offline.json` (offline); `eval/R
 - **`tests/test_finpilot.py`:** 11 offline tests covering the merchant key, ingestion, categorization,
   planted detection, exact simulation deltas, critic rejections, the critic-approved-only pipeline,
   ask routing, parsers and a full API run through `TestClient`.
+- **`tests/test_orchestration.py`, `tests/test_planning.py`:** 13 more tests.
+  - Orchestration: revise and drop/backfill with a scripted fake LLM, short-history routing, merchant memory,
+    invalid LLM categories.
+  - Planning: bills, goal-adaptive findings and trend, spread calibration, the planning API, and errors on
+    too little history.
+- **`.github/workflows/tests.yml`:** runs the suite on Python 3.11 on every push.
 - **`.github/workflows/agent-arena-2026-checks.yml`:** the official Agent Arena workflow. It checks that the
   code compiles on Python 3.11, that dependencies are present, that Mesh is used, and that the key is valid.
 

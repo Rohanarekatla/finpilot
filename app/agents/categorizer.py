@@ -5,11 +5,20 @@ by (merchant, direction) so the LLM sees each unknown merchant once, with a
 sample narration, its typical amount and how often it appears; the answer is
 applied to every transaction of that merchant. If the LLM is unavailable or
 returns an invalid category, generic keyword heuristics take over.
+
+Merchant memory: once the LLM has classified a merchant it is never asked
+again. The caller passes the memory in (service.py loads it from SQLite and
+saves new entries, so it survives restarts); without one, a process-level
+dict is used. Batches of unknown merchants are sent to Mesh in parallel.
 """
 from __future__ import annotations
 
+from collections.abc import MutableMapping
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 
+from app import config
 from app.audit import AuditTrail
 from app.llm import MeshLLM, get_llm
 from app.taxonomy import CATEGORIES, heuristic_category, rule_category
@@ -17,8 +26,9 @@ from app.taxonomy import CATEGORIES, heuristic_category, rule_category
 AGENT = "categorizer"
 BATCH = 40
 
-# Merchant memory: once the LLM has classified a merchant it is not asked again.
-_MEMORY: dict[str, tuple[str, float, str]] = {}
+# key "MERCHANT|debit" -> (category, confidence, reason)
+MerchantMemory = MutableMapping[str, tuple[str, float, str]]
+_PROCESS_MEMORY: dict[str, tuple[str, float, str]] = {}
 
 SYSTEM = f"""You are the Categorizer agent of FinPilot, a personal-finance system for Indian users.
 You receive merchants from bank statements that keyword rules could not classify. Each has a
@@ -34,10 +44,11 @@ Return JSON: {{"items": [{{"key": <key>, "category": <category>, "confidence": <
 
 
 def categorize(df: pd.DataFrame, mode: str = "auto", audit: AuditTrail | None = None,
-               llm: MeshLLM | None = None) -> pd.DataFrame:
+               llm: MeshLLM | None = None, memory: MerchantMemory | None = None) -> pd.DataFrame:
     """mode: 'rules' (rules only, rest 'other'), 'heuristic' (rules + keywords),
     'auto' (rules + LLM, heuristics as fallback)."""
     llm = llm or get_llm()
+    memory = _PROCESS_MEMORY if memory is None else memory
     out = df.copy()
     out["category"] = out["description"].map(rule_category)
     out["category_source"] = out["category"].notna().map({True: "rule", False: None})
@@ -48,7 +59,7 @@ def categorize(df: pd.DataFrame, mode: str = "auto", audit: AuditTrail | None = 
                   "Deterministic narration patterns for known brands and bank conventions")
 
     if pending.any() and mode == "auto" and llm.available:
-        _llm_tier(out, pending, audit, llm)
+        _llm_tier(out, pending, audit, llm, memory)
         pending = out["category"].isna()
 
     if pending.any():
@@ -66,7 +77,8 @@ def categorize(df: pd.DataFrame, mode: str = "auto", audit: AuditTrail | None = 
     return out
 
 
-def _llm_tier(out: pd.DataFrame, pending: pd.Series, audit: AuditTrail | None, llm: MeshLLM) -> None:
+def _llm_tier(out: pd.DataFrame, pending: pd.Series, audit: AuditTrail | None, llm: MeshLLM,
+              memory: MerchantMemory) -> None:
     sub = out[pending].assign(direction=lambda d: d["amount"].gt(0).map({True: "credit", False: "debit"}))
     groups = []
     for (merchant, direction), g in sub.groupby(["merchant", "direction"], sort=False):
@@ -77,19 +89,27 @@ def _llm_tier(out: pd.DataFrame, pending: pd.Series, audit: AuditTrail | None, l
             "typical_amount": round(float(g["amount"].abs().median())),
             "count": int(len(g)),
         })
-    decided = {g["key"]: _MEMORY[g["key"]] for g in groups if g["key"] in _MEMORY}
-    ask = [g for g in groups if g["key"] not in _MEMORY]
+    decided = {g["key"]: tuple(memory[g["key"]]) for g in groups if g["key"] in memory}
+    ask = [g for g in groups if g["key"] not in memory]
     if audit and decided:
         audit.log(AGENT, "memory", f"{len(decided)} merchants resolved from merchant memory",
-                  "Previously classified by the LLM in this process")
-    for i in range(0, len(ask), BATCH):
-        resp = llm.chat_json(AGENT, SYSTEM, {"merchants": ask[i:i + BATCH]})
-        for item in (resp or {}).get("items", []):
-            cat = str(item.get("category", "")).strip().lower()
-            if cat in CATEGORIES and item.get("key"):
-                conf = float(item.get("confidence", 0.7) or 0.7)
-                decided[item["key"]] = (cat, min(max(conf, 0.0), 1.0), str(item.get("reason", ""))[:200])
-                _MEMORY[item["key"]] = decided[item["key"]]
+                  "Previously classified by the LLM; not sent to Mesh again")
+    batches = [ask[i:i + BATCH] for i in range(0, len(ask), BATCH)]
+    if batches:
+        workers = max(1, min(config.LLM_MAX_WORKERS, len(batches)))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            responses = list(pool.map(lambda b: llm.chat_json(AGENT, SYSTEM, {"merchants": b}), batches))
+        asked = {g["key"] for g in ask}
+        for resp in responses:
+            for item in (resp or {}).get("items", []):
+                key, cat = item.get("key"), str(item.get("category", "")).strip().lower()
+                if cat in CATEGORIES and key in asked:  # ignore invented keys and categories
+                    try:
+                        conf = float(item.get("confidence", 0.7) or 0.7)
+                    except (TypeError, ValueError):
+                        conf = 0.7
+                    decided[key] = (cat, min(max(conf, 0.0), 1.0), str(item.get("reason", ""))[:200])
+                    memory[key] = decided[key]
 
     keys = out["merchant"] + "|" + out["amount"].gt(0).map({True: "credit", False: "debit"})
     for key, (cat, conf, reason) in decided.items():

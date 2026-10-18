@@ -159,7 +159,7 @@ def verdict_text(sim: dict) -> str:
     }[sim["verdict"]]
     if not sc["purchases"] and sim["delta_end_balance_p50"] >= 0:
         head = "That would improve your position."
-    
+
     what = "; ".join(
         [f"{inr(p['amount'])} on {p['date']}" for p in sc["purchases"]]
         + [f"{inr(abs(c['amount']))}/month {'more' if c['amount'] < 0 else 'less'} spending" for c in sc["monthly_changes"]]
@@ -222,6 +222,8 @@ def _rule_answer(question: str, analysis: Analysis, fs: dict) -> str:
         if parts:
             return " ".join(parts)
     s = analysis.stats
-    return (f"You earn about {inr(s['avg_monthly_income'])} and spend about {inr(s['avg_monthly_spend'])} a month "
-            f"(savings rate {s['savings_rate_pct']}%). Your balance is projected at {inr(fs['end_balance_p50'])} "
-            f"by {fs['to']}.")
+    text = (f"You earn about {inr(s['avg_monthly_income'])} and spend about {inr(s['avg_monthly_spend'])} a month "
+            f"(savings rate {s['savings_rate_pct']}%).")
+    if fs:
+        text += f" Your balance is projected at {inr(fs['end_balance_p50'])} by {fs['to']}."
+    return text
